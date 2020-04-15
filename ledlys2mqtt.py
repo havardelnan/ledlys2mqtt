@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 import os
+import re
 import paho.mqtt.client as mqtt
 import json
 import subprocess
@@ -32,9 +33,11 @@ def on_connect(client, userdata, flags, rc):
 
 # The callback for when a PUBLISH message is received from the server.
 def on_message(client, userdata, msg):
-    if msg.topic == "homeassistant/light/ulc20652/set":
+    reg = "homeassistant/light/ulc([0-9]*)/set"
+    match = re.match(reg, msg.topic)
+    if bool(match):
         payload = json.loads(msg.payload)
-        lampid = '20652'
+        lampid = match.group(1)
         retdict= {}
         if payload['state'] == "OFF":
             retdict['state'] = "OFF"
@@ -45,7 +48,8 @@ def on_message(client, userdata, msg):
                 retdict['brightness'] = int(payload['brightness'])
                 process = subprocess.run([LLCMD,'lightset', lampid, str(payload['brightness'])])
         returnjson = json.dumps(retdict)
-        client.publish("homeassistant/light/ulc20652/state", returnjson)
+        mqttpath = "homeassistant/light/ulc" + lampid
+        client.publish(mqttpath + "/state", returnjson)
 
 def on_log(client, userdata, level, buf):
     print("log: ",buf)
@@ -57,14 +61,23 @@ def init_ledlys():
         settings = read_settings()
     else:
         settings = {}
-        for x in discovery:
-            #print("---")
-            #print(x)
-            settings[x["lamp"]] = x
-            subject="homeassistant/light/ulc" + x["lamp"] + "/set"
+        for lamp in discovery:
+            settings[lamp["lamp"]] = lamp
+            mqttpath = "homeassistant/light/ulc" + lamp["lamp"]
+            hauniqueid = "ulc" + lamp["lamp"]
+            conftopic =  mqttpath + "/config"
+            mqtt_conf = {"~": mqttpath, "name": lamp["name"],  "unique_id": hauniqueid, "cmd_t": "~/set", "stat_t": "~/state", "schema": "json",  "brightness": True, "bri_scl": 100 }
+            if lamp["varicolor"] == "1":
+                mqtt_conf["color_temp"] = True
+            print(mqtt_conf)
+            client.publish(conftopic, json.dumps(mqtt_conf))
+            subject= mqttpath+ "/set"
             client.subscribe(subject)
-        print(settings)
-        write_settings(settings)
+        #print(settings)
+        #write_settings(settings)
+
+
+
 
 client = mqtt.Client()
 client.on_connect = on_connect
