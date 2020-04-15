@@ -6,6 +6,8 @@ import json
 import subprocess
 from dotenv import load_dotenv
 
+settings = {}
+
 load_dotenv()
 MQTTUSER = os.getenv('MQTT_USER')
 MQTTPASS = os.getenv('MQTT_PASS')
@@ -38,18 +40,19 @@ def on_message(client, userdata, msg):
     if bool(match):
         payload = json.loads(msg.payload)
         lampid = match.group(1)
-        retdict= {}
         if payload['state'] == "OFF":
-            retdict['state'] = "OFF"
             process = subprocess.run([LLCMD,'lightset', lampid, "0"])
-        else :
-            retdict['state'] = "ON"
-            if payload['brightness']:
-                retdict['brightness'] = int(payload['brightness'])
-                process = subprocess.run([LLCMD,'lightset', lampid, str(payload['brightness'])])
-        returnjson = json.dumps(retdict)
-        mqttpath = "homeassistant/light/ulc" + lampid
-        client.publish(mqttpath + "/state", returnjson)
+        elif payload['state'] == "ON":
+            print(payload)
+            if "brightness" in payload:
+                process = subprocess.run([LLCMD,'lightset', lampid, str(payload['brightness'])])     
+            if "color_temp" in payload:
+                calculatedcolortemp = (int(payload['color_temp']) -153)/3.47
+                process = subprocess.run([LLCMD,'setcolor', lampid, str(calculatedcolortemp)])
+            if "brightness" not in payload and "color_temp" not in payload:
+                saved_brightness = "25"
+                process = subprocess.run([LLCMD,'lightset', lampid, str(saved_brightness)]) 
+        sync_lamp(lampid)
 
 def on_log(client, userdata, level, buf):
     print("log: ",buf)
@@ -60,9 +63,8 @@ def init_ledlys():
     if os.path.isfile(SETTINGS_FILE):
         settings = read_settings()
     else:
-        settings = {}
         for lamp in discovery:
-            settings[lamp["lamp"]] = lamp
+            #settings[lamp["lamp"]]["prev"] = lamp["intensity"]
             mqttpath = "homeassistant/light/ulc" + lamp["lamp"]
             hauniqueid = "ulc" + lamp["lamp"]
             conftopic =  mqttpath + "/config"
@@ -73,8 +75,21 @@ def init_ledlys():
             client.publish(conftopic, json.dumps(mqtt_conf))
             subject= mqttpath+ "/set"
             client.subscribe(subject)
+            sync_lamp(lamp["lamp"])
         #print(settings)
         #write_settings(settings)
+def sync_lamp(lampid):
+    enquire = json.loads(subprocess.run([LLCMD, "enquire", lampid], stdout=subprocess.PIPE).stdout.decode('utf-8'))
+    if enquire["report"]["intensity"] == "0":
+        mqtt_state = {"state": "OFF"}
+    else:
+        mqtt_state = {"state": "ON", "brightness": int(enquire["report"]["intensity"])}
+        if enquire["report"]["varicolor"] == "1":
+            calculatedcolortemp = (int(enquire["report"]["color"]) * 3.47 ) + 153
+            mqtt_state["color_temp"] = calculatedcolortemp
+    mqttpath = "homeassistant/light/ulc" + lampid
+    client.publish(mqttpath + "/state", json.dumps(mqtt_state))
+
 
 
 
