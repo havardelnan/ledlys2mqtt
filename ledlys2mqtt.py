@@ -35,6 +35,7 @@ def on_connect(client, userdata, flags, rc):
 
 # The callback for when a PUBLISH message is received from the server.
 def on_message(client, userdata, msg):
+    global settings
     reg = "homeassistant/light/ulc([0-9]*)/set"
     match = re.match(reg, msg.topic)
     if bool(match):
@@ -43,14 +44,15 @@ def on_message(client, userdata, msg):
         if payload['state'] == "OFF":
             process = subprocess.run([LLCMD,'lightset', lampid, "0"])
         elif payload['state'] == "ON":
-            print(payload)
             if "brightness" in payload:
-                process = subprocess.run([LLCMD,'lightset', lampid, str(payload['brightness'])])     
+                process = subprocess.run([LLCMD,'lightset', lampid, str(payload['brightness'])])
+                settings[lampid]["prev"] = int(payload['brightness'])
+                write_settings(settings)
             if "color_temp" in payload:
                 calculatedcolortemp = (int(payload['color_temp']) -153)/3.47
                 process = subprocess.run([LLCMD,'setcolor', lampid, str(calculatedcolortemp)])
             if "brightness" not in payload and "color_temp" not in payload:
-                saved_brightness = "25"
+                saved_brightness = settings[lampid]["prev"]
                 process = subprocess.run([LLCMD,'lightset', lampid, str(saved_brightness)]) 
         sync_lamp(lampid)
 
@@ -58,24 +60,24 @@ def on_log(client, userdata, level, buf):
     print("log: ",buf)
 
 def init_ledlys():
+    global settings
     print("Initializing...")
     discovery = json.loads(subprocess.run([LLCMD, "discover"], stdout=subprocess.PIPE).stdout.decode('utf-8'))
     if os.path.isfile(SETTINGS_FILE):
         settings = read_settings()
-    else:
-        for lamp in discovery:
-            #settings[lamp["lamp"]]["prev"] = lamp["intensity"]
-            mqttpath = "homeassistant/light/ulc" + lamp["lamp"]
-            hauniqueid = "ulc" + lamp["lamp"]
-            conftopic =  mqttpath + "/config"
-            mqtt_conf = {"~": mqttpath, "name": lamp["name"],  "unique_id": hauniqueid, "cmd_t": "~/set", "stat_t": "~/state", "schema": "json",  "brightness": True, "bri_scl": 100 }
-            if lamp["varicolor"] == "1":
-                mqtt_conf["color_temp"] = True
-            print(mqtt_conf)
-            client.publish(conftopic, json.dumps(mqtt_conf))
-            subject= mqttpath+ "/set"
-            client.subscribe(subject)
-            sync_lamp(lamp["lamp"])
+    for lamp in discovery:
+        if lamp["intensity"] != "0":
+                settings[lamp["lamp"]] = {"prev": int(lamp["intensity"])}
+        mqttpath = "homeassistant/light/ulc" + lamp["lamp"]
+        hauniqueid = "ulc" + lamp["lamp"]
+        conftopic =  mqttpath + "/config"
+        mqtt_conf = {"~": mqttpath, "name": lamp["name"],  "unique_id": hauniqueid, "cmd_t": "~/set", "stat_t": "~/state", "schema": "json",  "brightness": True, "bri_scl": 100 }
+        if lamp["varicolor"] == "1":
+            mqtt_conf["color_temp"] = True
+        client.publish(conftopic, json.dumps(mqtt_conf))
+        subject= mqttpath+ "/set"
+        client.subscribe(subject)
+        sync_lamp(lamp["lamp"])
         #print(settings)
         #write_settings(settings)
 def sync_lamp(lampid):
