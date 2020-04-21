@@ -5,6 +5,8 @@ import paho.mqtt.client as mqtt
 import json
 import subprocess
 from dotenv import load_dotenv
+import logging
+logging.basicConfig(level=logging.INFO)
 
 settings = {}
 
@@ -102,5 +104,8 @@ client.on_message = on_message
 client.on_log=on_log
 client.username_pw_set(MQTTUSER, MQTTPASS)
 client.connect(MQTTHOST)
+logger = logging.getLogger("ll2mqtt")
+client.enable_logger(logger)
+logger.info('Main loop starting')
 client.loop_forever()
 
