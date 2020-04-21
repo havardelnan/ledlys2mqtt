@@ -71,10 +71,10 @@ def init_ledlys():
         mqttpath = "homeassistant/light/ulc" + lamp["lamp"]
         hauniqueid = "ulc" + lamp["lamp"]
         conftopic =  mqttpath + "/config"
-        mqtt_conf = {"~": mqttpath, "name": lamp["name"],  "unique_id": hauniqueid, "cmd_t": "~/set", "stat_t": "~/state", "schema": "json",  "brightness": True, "bri_scl": 100 }
+        mqtt_conf = {"~": mqttpath, "name": lamp["name"],  "unique_id": hauniqueid, "cmd_t": "~/set", "stat_t": "~/state", "schema": "json", "device": {"name": "ULC-"+lamp["lamp"]+" ("+lamp["name"]+")","model": "ULC","manufacturer": "LedLys AS", "identifiers": [lamp["serial"], hauniqueid],"sw_version": lamp["version"]},  "brightness": True, "bri_scl": 100 }
         if lamp["varicolor"] == "1":
             mqtt_conf["color_temp"] = True
-        client.publish(conftopic, json.dumps(mqtt_conf))
+        client.publish(conftopic, payload=json.dumps(mqtt_conf),retain=True)
         subject= mqttpath+ "/set"
         client.subscribe(subject)
         sync_lamp(lamp["lamp"])
@@ -90,7 +90,7 @@ def sync_lamp(lampid):
             calculatedcolortemp = (int(enquire["report"]["color"]) * 3.47 ) + 153
             mqtt_state["color_temp"] = calculatedcolortemp
     mqttpath = "homeassistant/light/ulc" + lampid
-    client.publish(mqttpath + "/state", json.dumps(mqtt_state))
+    client.publish(mqttpath + "/state", payload=json.dumps(mqtt_state),retain=True)
 
 
 
