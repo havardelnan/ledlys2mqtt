@@ -87,7 +87,8 @@ def bytestodict(bytestring):
     type = msgtype["msgclass"]
     t = maindict["structs"][type]
     if len(bytestring) != struct.calcsize(t["pack"]):
-        print("ERROR: bytestring do not match size of " + type)
+        #print("ERROR: bytestring do not match size of " + type)
+        t["pack"] = t["pack"].ljust((len(t["pack"])+(len(bytestring) - struct.calcsize(t["pack"]))), 'x')
     r = list(struct.unpack(t["pack"],bytestring))
     if len(r) != len(t["keys"]):
         print("ERROR: resulting list does not match number of keys")
@@ -96,7 +97,7 @@ def bytestodict(bytestring):
         key = t["keys"][x]
         res = r[x]
         if key["type"] == "str":
-            a[key["name"]] = str(res.decode("utf-8")).rstrip('\x00')
+            a[key["name"]] = str(res.decode("utf-8"))[:str(res.decode("utf-8")).index('\x00')]
         else:
             a[key["name"]] = eval(key["type"]+"("+str(res)+")")
     return a
@@ -124,3 +125,4 @@ def dicttobytes(msgid,lampid,msgdict = {}):
 #print(dicttobytes(2,20652,{"val8_0": 50,"val8_1": 100}))
 #theloop
 #print(bytestodict(dicttobytes(2,20652,{"val8_0": 50,"val8_1": 100})))
+
