@@ -15,10 +15,11 @@ REPORTPORT = 15241
 
 OWNIP = "10.20.0.50"
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 settings = {"light": {}, "binary_sensor": {}}
 lampinit = {}
+states = {}
 
 load_dotenv()
 MQTTUSER = os.getenv('MQTT_USER')
@@ -46,13 +47,13 @@ def on_connect(client, userdata, flags, rc):
 
 def on_message(client, userdata, msg):
     global settings
+    global states
     reg = "homeassistant/light/ulc([0-9]*)/set"
     match = re.match(reg, msg.topic)
     if bool(match):
         payload = json.loads(msg.payload)
         lampid = match.group(1)
         logger.info("Setting lamp %s:%s", str(lampid), payload)
-
         if payload['state'] == "OFF":
             newbrightness = 0
             newcolortemp = settings["light"][lampid]["color"]
@@ -67,15 +68,40 @@ def on_message(client, userdata, msg):
             else:
                 newcolortemp = settings["light"][lampid]["color"]
             if "brightness" not in payload and "color_temp" not in payload:
-                print("test")
                 if "prev" not in settings["light"][lampid]:
                     settings["light"][lampid]["prev"] = 15
-                    print("test2")
                 newbrightness = settings["light"][lampid]["prev"]
                 newcolortemp = settings["light"][lampid]["color"]
+        if str(lampid) not in states:
+            states[str(lampid)] = {}
+        states[str(lampid)]["bri"] = int(newbrightness)
+        states[str(lampid)]["color"] = int(newcolortemp)
         do_setlamp(int(lampid), int(newbrightness), int(newcolortemp))
         do_enquire(int(lampid))
-
+    reg = "homeassistant/light/ulc([0-9]*)_2/set"   
+    match = re.match(reg, msg.topic)
+    if bool(match):
+        payload = json.loads(msg.payload)
+        lampid = match.group(1)
+        logger.info("Setting lamp2 %s:%s", str(lampid), payload)
+        if payload['state'] == "OFF":
+            newbrightness = settings["light"][lampid]["bri"]
+            newcolortemp = 0
+        elif payload['state'] == "ON":
+            if "brightness" in payload:
+                newbrightness = settings["light"][lampid]["bri"]
+                newcolortemp = int(payload['brightness'])
+            else:
+                newbrightness = settings["light"][lampid]["bri"]
+            if "brightness" not in payload:
+                newbrightness = settings["light"][lampid]["bri"]
+                newcolortemp = 15
+        if str(lampid) not in states:
+            states[str(lampid)] = {}
+        states[str(lampid)]["bri"] = int(newbrightness)
+        states[str(lampid)]["color"] = int(newcolortemp)
+        do_setlamp(int(lampid), int(newbrightness), int(newcolortemp))
+        do_enquire(int(lampid))
 
 def do_llbroadcast(binary_data):
     opened_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -96,10 +122,18 @@ def do_discovery():
 def do_enquire(lampid):
     binary_data = importstruct.dicttobytes(8, lampid)
     do_llbroadcast(binary_data)
+    do_llbroadcast(binary_data)
+    do_llbroadcast(binary_data)
+    do_llbroadcast(binary_data)
+    do_llbroadcast(binary_data)
 
 
 def do_setlamp(lampid, bri=0, col=100):
     binary_data = importstruct.dicttobytes(2, lampid, {"val8_0": bri, "val8_1": col})
+    do_llbroadcast(binary_data)
+    do_llbroadcast(binary_data)
+    do_llbroadcast(binary_data)
+    do_llbroadcast(binary_data)
     do_llbroadcast(binary_data)
 
 
@@ -129,15 +163,39 @@ def set_lampstatus(lampid, bri=None, col=None):
             lampinit[lampid] = 2
 
     if change:
-        if bri == 0:
-            mqtt_state["state"] = "OFF"
+
+        if settings["light"][str(lampid)]["mode"]  == 2:
+            logger.debug("A lamp thats two lamps has entered the game")
+            logger.debug("lamp1:" + str(settings["light"][str(lampid)]["bri"]))
+            logger.debug("lamp2:" + str(settings["light"][str(lampid)]["color"]))
+            #Set lamp 1
+            if bri == 0:
+                mqtt_state["state"] = "OFF"
+            else:
+                mqtt_state["state"] = "ON"
+                mqtt_state["brightness"] = settings["light"][str(lampid)]["bri"]
+            mqttpath = "homeassistant/light/ulc" + str(lampid)
+            client.publish(mqttpath + "/state", payload=json.dumps(mqtt_state), retain=True)
+            logger.info("Syncronizing lamp %s: %s", str(lampid), mqtt_state)
+            #Set lamp 2
+            if col == 0:
+                mqtt_state["state"] = "OFF"           
+            else:
+                mqtt_state["state"] = "ON"
+                mqtt_state["brightness"] = settings["light"][str(lampid)]["color"]
+            mqttpath = "homeassistant/light/ulc" + str(lampid) + "_2"
+            client.publish(mqttpath + "/state", payload=json.dumps(mqtt_state), retain=True)
+            logger.info("Syncronizing lamp %s: %s", str(lampid), mqtt_state)
         else:
-            mqtt_state["state"] = "ON"
-            mqtt_state["brightness"] = settings["light"][str(lampid)]["bri"]
-            mqtt_state["color_temp"] = int((int(settings["light"][str(lampid)]["color"]) * 3.47) + 153)
-        mqttpath = "homeassistant/light/ulc" + str(lampid)
-        client.publish(mqttpath + "/state", payload=json.dumps(mqtt_state), retain=True)
-        logger.info("Syncronizing lamp %s: %s", str(lampid), mqtt_state)
+            if bri == 0:
+                mqtt_state["state"] = "OFF"
+            else:
+                mqtt_state["state"] = "ON"
+                mqtt_state["brightness"] = settings["light"][str(lampid)]["bri"]
+                mqtt_state["color_temp"] = int((int(settings["light"][str(lampid)]["color"]) * 3.47) + 153)
+            mqttpath = "homeassistant/light/ulc" + str(lampid)
+            client.publish(mqttpath + "/state", payload=json.dumps(mqtt_state), retain=True)
+            logger.info("Syncronizing lamp %s: %s", str(lampid), mqtt_state)
         write_settings(settings)
 
 
@@ -155,8 +213,11 @@ def set_motion(lampid, state):
 def init_lamp(lampid, lamp):
     global settings
     global lampinit
+    logger.debug('Lamp: ' + str(lamp["lampname"]))
+    logger.debug('Lamp: ' + str(lamp["lampMode"]))
     if int(lampid) not in settings["light"]:
         settings["light"][str(lampid)] = {}
+    settings["light"][str(lampid)]["mode"] = lamp["lampMode"]
     mqttpath = "homeassistant/light/ulc" + str(lamp["sourceid"])
     hauniqueid = "ulc" + str(lamp["sourceid"])
     conftopic = mqttpath + "/config"
@@ -170,8 +231,8 @@ def init_lamp(lampid, lamp):
     if int(lamp["isswitch"]) == 0:
         if int(lampid) not in settings["binary_sensor"]:
             settings["binary_sensor"][str(lampid)] = {"state": ""}
-        mqttpath = ("homeassistant/binary_sensor/ulc" + 
-                    str(lamp["sourceid"])+
+        mqttpath = ("homeassistant/binary_sensor/ulc" +
+                    str(lamp["sourceid"]) +
                     "mov")
         conftopic = mqttpath + "/config"
         hauniqueid = "ulc" + str(lamp["sourceid"]) + "mov"
@@ -179,6 +240,18 @@ def init_lamp(lampid, lamp):
         mqtt_conf = {"name": binarysensorname,  "unique_id": hauniqueid, "device_class": "motion", "state_topic": mqttpath + "/state", "payload_on": "ON", "payload_off": "OFF", "device": {"name": "ULC-" + str(lamp["sourceid"])+" ("+lamp["lampname"]+")", "model": "ULC (" + str(lamp["hdwversion_1"]) + "." + str(lamp["hdwversion_2"]) + ")", "manufacturer": "LedLys AS", "identifiers": [lamp["serial"], hauniqueid], "sw_version": str(lamp["stwversion_1"]) + "." + str(lamp["stwversion_2"])}}
         client.publish(conftopic, payload=json.dumps(mqtt_conf))
 
+
+    if int(lamp["lampMode"]) == 2:
+        lampid2 = str(lampid) + "_2"
+        logger.debug('Lamp: ' + str(lampid2))
+        mqttpath2 = "homeassistant/light/ulc" + str(lampid2)
+        hauniqueid2 = "ulc" + str(lamp["sourceid"]) + "_2"
+        lampname2 = str(lamp["lampname"]) + "_2"
+        conftopic = mqttpath2 + "/config"
+        mqtt_conf = {"~": mqttpath2, "name": lampname2,  "unique_id": hauniqueid2, "cmd_t": "~/set", "stat_t": "~/state", "schema": "json", "device": {"name": "ULC-" + str(lamp["sourceid"])+" ("+lamp["lampname"]+")", "model": "ULC (" + str(lamp["hdwversion_1"]) + "." + str(lamp["hdwversion_2"]) + ")", "manufacturer": "LedLys AS", "identifiers": [lamp["serial"], hauniqueid], "sw_version": str(lamp["stwversion_1"]) + "." + str(lamp["stwversion_2"])},  "brightness": True, "bri_scl": 100}
+        client.publish(conftopic, payload=json.dumps(mqtt_conf), retain=True)
+        subject2 = mqttpath2 + "/set"
+        client.subscribe(subject2)
     lampinit[lamp["sourceid"]] = 1
     do_enquire(lamp["sourceid"])
 
@@ -206,11 +279,18 @@ class ledlysServer:
                 if packet["sourceid"] not in lampinit:
                     init_lamp(packet["sourceid"], packet)
                 set_lampstatus(packet["sourceid"], packet["currentIntensityPct"], packet["currentTemperaturePct"])
-                print("tezzt" + str(packet))
-            # else:
-            #    print("Not tracked:")
-            #    print(packet)
 
+
+async def periodic():
+    global settings
+    global lampinit
+    global states
+    while True:
+        for lampid in states:
+            if settings["light"][lampid]["bri"] != states[lampid]["bri"]:
+                do_setlamp(int(lampid), int(states[lampid]["bri"]), int(states[lampid]["color"]))
+                do_enquire(int(lampid))
+        await asyncio.sleep(1)
 
 loop = asyncio.get_event_loop()
 logger.info('Starting UDP server')
@@ -218,6 +298,8 @@ listen = loop.create_datagram_endpoint(ledlysServer, local_addr=('0.0.0.0', LYSP
 transport, protocol = loop.run_until_complete(listen)
 listen2 = loop.create_datagram_endpoint(ledlysServer, local_addr=('0.0.0.0', REPORTPORT))
 transport, protocol = loop.run_until_complete(listen2)
+
+task = loop.create_task(periodic())
 
 if os.path.isfile(SETTINGS_FILE):
     settings = read_settings()
